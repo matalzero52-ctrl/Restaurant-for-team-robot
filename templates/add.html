@@ -49,25 +49,16 @@
         <script>
             const province = document.getElementById("province");
             const estate = document.getElementById("industrial_estate");
-            const selected = this.value;
-            for (let option of estate.options) {
-                if(option.value === ""){
-                    continue;
+            const allEstate = Array.from(estate.options);
+            province.addEventListener("change", function(){
+                const selected = this.value;
+                estate.innerHTML = '<option value="">-- เลือกนิคม --</option>';
+                allEstate.forEach(option => {
+                if(option.dataset.province === selected){
+                    estate.appendChild(option);
                 }
-                if (option.dataset.province === selected) {
-                    option.hidden = false;
-                }
-                else{
-                    option.hidden = true;
-                }
-            }
-        province.addEventListener(
-        "change",
-        function(){
-            estate.value="";
-            filterEstate();
+            });
         });
-        filterEstate();
         </script>
 
         <div class="mb-3">
