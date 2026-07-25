@@ -349,7 +349,7 @@ def add_restaurant():
     provinces=provinces,
     industrial_estates=industrial_estates
 )
-@app.route("/delete/<int:id>")
+@app.route("/delete/<int:id>", methods=["POST"])
 def delete_restaurant(id):
 
     conn = get_db_connection()
