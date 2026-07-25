@@ -1,58 +1,61 @@
 import os
-import sqlite3
+import psycopg2
+import psycopg2.extras
 from flask import Flask, render_template, request, redirect
 from datetime import datetime
+from dotenv import load_dotenv
 
 app = Flask(__name__)
-os.makedirs("database", exist_ok=True)
+load_dotenv()
+
 # ตำแหน่งฐานข้อมูล
-DB_PATH = os.path.join("database", "restaurant.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # ฟังก์ชันเชื่อมฐานข้อมูล
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH,timeout=10)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return psycopg2.connect(
+        DATABASE_URL,
+        cursor_factory=psycopg2.extras.RealDictCursor
+    )
 
 # สร้างฐานข้อมูล
 def init_db():
 
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA journal_mode=WAL")
-
+    conn = get_db_connection()
     cursor = conn.cursor()
+
     # ตารางร้านอาหาร
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS restaurants (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            province TEXT NOT NULL,
-            industrial_estate TEXT NOT NULL,
-            google_map TEXT,
-            created_by TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        province TEXT NOT NULL,
+        industrial_estate TEXT NOT NULL,
+        google_map TEXT,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
     """)
 
 
     # ตารางจังหวัด
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS provinces (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE
-        )
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE
+    )
     """)
 
     # ตารางนิคม
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS industrial_estates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL ,
-            province_id INTEGER,
-            UNIQUE(name, province_id),
-            FOREIGN KEY(province_id)
-            REFERENCES provinces(id)
-        )
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        province_id INTEGER,
+        UNIQUE(name, province_id),
+        FOREIGN KEY(province_id)
+        REFERENCES provinces(id)
+    )
     """)
 
     # เพิ่มข้อมูลจังหวัดเริ่มต้น
@@ -78,11 +81,12 @@ def init_db():
 
         cursor.execute(
             """
-            INSERT OR IGNORE INTO provinces (name)
-            VALUES (?)
+            INSERT INTO provinces(name)
+            VALUES (%s)
+            ON CONFLICT(name) DO NOTHING
             """,
             (province,)
-        )
+            )
 
 
     # เพิ่มข้อมูลนิคมเริ่มต้น
@@ -127,30 +131,32 @@ def init_db():
 
     for estate, province in industrial_estates:
 
-        province_data = cursor.execute(
+        cursor.execute(
         """
         SELECT id
         FROM provinces
-        WHERE name = ?
+        WHERE name = %s
         """,
         (province,)
-    ).fetchone()
+        )
+        province_data = cursor.fetchone()
 
 
         cursor.execute(
             """
-            INSERT OR IGNORE INTO industrial_estates
+            INSERT INTO industrial_estates
             (
                 name,
                 province_id
             )
-            VALUES (?,?)
+            VALUES (%s,%s)
+            ON CONFLICT(name, province_id) DO NOTHING
             """,
             (
                 estate,
-                province_data[0]  if province_data else None
+                province_data["id"] if province_data else None
             )
-        )
+            )
     conn.commit()
     conn.close()
 
@@ -169,43 +175,48 @@ def home():
 
     # ค้นหาชื่อร้าน
     if name:
-        sql += " AND name LIKE ?"
+        sql += " AND name ILIKE %s"
         params.append(f"%{name}%")
 
     # ค้นหาจังหวัด
     if province:
-        sql += " AND province LIKE ?"
+        sql += " AND province ILIKE %s"
         params.append(f"%{province}%")
 
     # ค้นหานิคม
     if industrial_estate:
-        sql += " AND industrial_estate LIKE ?"
+        sql += " AND industrial_estate ILIKE %s"
         params.append(f"%{industrial_estate}%")
 
     sql += " ORDER BY id DESC"
 
-    restaurants = conn.execute(sql, params).fetchall()
+    cursor = conn.cursor()
+    cursor.execute(sql, params)
+    restaurants = cursor.fetchall()
 
 
     # ดึงข้อมูลสำหรับ dropdown จังหวัด
-    provinces = conn.execute(
+    cursor.execute(
         """
         SELECT name
         FROM provinces
         ORDER BY name
         """
-    ).fetchall()
+        )
+    provinces = cursor.fetchall()
 
     # ดึงข้อมูลสำหรับ dropdown นิคม
-    industrial_estates = conn.execute("""
+    cursor.execute("""
         SELECT
-            industrial_estates.name,
-            provinces.name AS province
-        FROM industrial_estates
-        LEFT JOIN provinces
-        ON industrial_estates.province_id = provinces.id
-        ORDER BY provinces.name, industrial_estates.name
-        """).fetchall()
+        industrial_estates.name,
+        provinces.name AS province
+    FROM industrial_estates
+    LEFT JOIN provinces
+    ON industrial_estates.province_id = provinces.id
+    ORDER BY provinces.name, industrial_estates.name
+    """)
+
+    industrial_estates = cursor.fetchall()
 
     conn.close()
     return render_template(
@@ -223,21 +234,26 @@ def add_restaurant():
 
     conn = get_db_connection()
 
-    provinces = conn.execute("""
+    cursor = conn.cursor()
+
+    cursor.execute("""
         SELECT name
         FROM provinces
         ORDER BY name
-    """).fetchall()
+    """)
+    provinces = cursor.fetchall()
 
-    industrial_estates = conn.execute("""
+    cursor.execute("""
         SELECT
-        industrial_estates.name,
-        provinces.name AS province
-        FROM industrial_estates
-        LEFT JOIN provinces
-        ON industrial_estates.province_id = provinces.id
-        ORDER BY provinces.name, industrial_estates.name
-        """).fetchall()
+            industrial_estates.name,
+            provinces.name AS province
+            FROM industrial_estates
+            LEFT JOIN provinces
+            ON industrial_estates.province_id = provinces.id
+            ORDER BY provinces.name, industrial_estates.name
+            """)
+        
+    industrial_estates = cursor.fetchall()
 
     if request.method == "POST":
 
@@ -266,7 +282,7 @@ def add_restaurant():
                     created_by,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
             """,
             (
             name,
@@ -301,7 +317,7 @@ def delete_restaurant(id):
     cursor = conn.cursor()
 
     cursor.execute(
-        "DELETE FROM restaurants WHERE id = ?",
+        "DELETE FROM restaurants WHERE id = %s",
         (id,)
     )
 
@@ -317,20 +333,24 @@ def edit_restaurant(id):
 
 
     # ดึงข้อมูลร้านเดิม
-    restaurant = conn.execute(
-        "SELECT * FROM restaurants WHERE id = ?",
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM restaurants WHERE id = %s",
         (id,)
-    ).fetchone()
+        )
+    restaurant = cursor.fetchone()
+
     if restaurant is None:
             conn.close()
             return "ไม่พบร้านอาหาร"
-    provinces = conn.execute("""
+    cursor.execute("""
     SELECT name
     FROM provinces
     ORDER BY name
-    """).fetchall()
+    """)
+    provinces = cursor.fetchall()
 
-    industrial_estates = conn.execute("""
+    cursor.execute("""
         SELECT
             industrial_estates.name,
             provinces.name AS province
@@ -338,7 +358,8 @@ def edit_restaurant(id):
         LEFT JOIN provinces
         ON industrial_estates.province_id = provinces.id
         ORDER BY provinces.name, industrial_estates.name
-        """).fetchall()
+        """)
+    industrial_estates = cursor.fetchall()
 
     if request.method == "POST":
 
@@ -349,15 +370,15 @@ def edit_restaurant(id):
         created_by = request.form["created_by"]
 
 
-        conn.execute("""
+        cursor.execute("""
             UPDATE restaurants SET
-                name = ?,
-                province = ?,
-                industrial_estate = ?,
-                google_map = ?,
-                created_by = ?
+            name = %s,
+            province = %s,
+            industrial_estate = %s,
+            google_map = %s,
+            created_by = %s
 
-            WHERE id = ?
+        WHERE id = %s
 
         """,
         (
