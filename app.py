@@ -20,9 +20,47 @@ def get_db_connection():
 
 # สร้างฐานข้อมูล
 def init_db():
+    
+    print("===== init_db START =====")
 
     conn = get_db_connection()
     cursor = conn.cursor()
+
+    print("Connected to PostgreSQL")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS restaurants (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            province TEXT NOT NULL,
+            industrial_estate TEXT NOT NULL,
+            google_map TEXT,
+            created_by TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+    print("restaurants OK")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS provinces (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE
+        )
+    """)
+    print("provinces OK")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS industrial_estates (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            province_id INTEGER,
+            UNIQUE(name, province_id),
+            FOREIGN KEY(province_id)
+            REFERENCES provinces(id)
+        )
+    """)
+    print("industrial_estates OK")
+
 
     # ตารางร้านอาหาร
     cursor.execute("""
@@ -158,6 +196,7 @@ def init_db():
             )
             )
     conn.commit()
+    print("===== init_db FINISH =====")
     conn.close()
 
 
@@ -401,11 +440,13 @@ def edit_restaurant(id):
         industrial_estates=industrial_estates
     )
 
+init_db()
+
 if __name__ == "__main__":
 
-    init_db()
+
 
     app.run(
         host="0.0.0.0",
-        port=5000,
-        debug=True)
+        port=5000
+        )
